@@ -1,0 +1,17 @@
+{
+  "name": "modmail-bot",
+  "version": "1.0.0",
+  "description": "Bot de modmail para Discord (discord.js + MongoDB)",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.5",
+    "mongoose": "^8.8.0"
+  }
+}
