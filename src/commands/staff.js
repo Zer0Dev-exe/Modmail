@@ -1,6 +1,6 @@
 const { EmbedBuilder } = require('discord.js');
 const { Ticket, Block, Snippet } = require('../models');
-const { contactUser } = require('../tickets');
+const { contactUser, sendLog } = require('../tickets');
 const U = require('../util');
 const S = require('../slash');
 
@@ -92,47 +92,82 @@ const commands = [
   },
   {
     name: 'block',
+    aliases: ['blacklist', 'bl'],
     group: G,
     level: 'staff',
-    usage: 'block [@usuario|ID] [motivo]',
-    description: 'Impide que un usuario abra tickets. Dentro de un ticket bloquea a su usuario.',
-    run: async ({ message, guild, args, prefix }) => {
+    usage: 'block [@usuario|ID] [duración] [motivo]',
+    description: 'Añade a la blacklist: el usuario no podrá abrir tickets. Duración opcional (`12h`, `7d`…) '
+      + 'para un bloqueo temporal. Dentro de un ticket bloquea a su usuario.',
+    run: async ({ client, message, guild, cfg, args, prefix }) => {
       const { userId, rest } = await resolveTarget(message, args);
-      if (!userId) throw new U.UserError(`Uso: \`${prefix}block <@usuario|ID> [motivo]\``);
+      if (!userId) throw new U.UserError(`Uso: \`${prefix}block <@usuario|ID> [duración] [motivo]\``);
+
+      const user = await client.users.fetch(userId).catch(() => null);
+      if (!user) throw new U.UserError('No se ha encontrado a ese usuario.');
+      if (user.bot) throw new U.UserError('No se puede bloquear a un bot.');
+      const member = await guild.members.fetch(userId).catch(() => null);
+      if (member && U.isStaff(member, cfg)) throw new U.UserError('No puedes bloquear a un miembro del staff.');
+
+      const [first, afterFirst] = U.splitFirst(rest);
+      const ms = U.parseDuration(first);
+      if (ms !== null && ms < 60 * 1000) throw new U.UserError('La duración mínima es de 1 minuto.');
+      const reason = (ms !== null ? afterFirst : rest) || null;
+      const expiresAt = ms !== null ? new Date(Date.now() + ms) : null;
+
       await Block.updateOne(
         { guildId: guild.id, userId },
-        { $set: { reason: rest || null, blockedBy: message.author.id } },
+        { $set: { reason, blockedBy: message.author.id, expiresAt } },
         { upsert: true },
       );
-      await U.respond(message, 'success', `⛔ <@${userId}> bloqueado.${rest ? ` Motivo: ${rest}` : ''}`);
+
+      const until = expiresAt ? `hasta ${U.ts(expiresAt, 'f')} (${U.ts(expiresAt)})` : 'de forma **permanente**';
+      const text = `⛔ ${user} (\`${user.id}\`) añadido a la blacklist ${until}.${reason ? `\n**Motivo:** ${reason}` : ''}`;
+      await U.respond(message, 'success', text);
+      await sendLog(guild, cfg, {
+        embeds: [U.embed('error', `${text}\n**Por:** ${message.author}`)],
+        allowedMentions: { parse: [] },
+      });
     },
   },
   {
     name: 'unblock',
+    aliases: ['unblacklist', 'unbl'],
     group: G,
     level: 'staff',
     usage: 'unblock [@usuario|ID]',
-    description: 'Desbloquea a un usuario.',
-    run: async ({ message, guild, args, prefix }) => {
+    description: 'Quita a un usuario de la blacklist.',
+    run: async ({ message, guild, cfg, args, prefix }) => {
       const { userId } = await resolveTarget(message, args);
       if (!userId) throw new U.UserError(`Uso: \`${prefix}unblock <@usuario|ID>\``);
       const res = await Block.deleteOne({ guildId: guild.id, userId });
-      if (!res.deletedCount) throw new U.UserError('Ese usuario no estaba bloqueado.');
-      await U.respond(message, 'success', `✅ <@${userId}> desbloqueado.`);
+      if (!res.deletedCount) throw new U.UserError('Ese usuario no está en la blacklist.');
+      await U.respond(message, 'success', `✅ <@${userId}> quitado de la blacklist.`);
+      await sendLog(guild, cfg, {
+        embeds: [U.embed('success', `✅ <@${userId}> (\`${userId}\`) quitado de la blacklist por ${message.author}.`)],
+        allowedMentions: { parse: [] },
+      });
     },
   },
   {
     name: 'blocklist',
-    aliases: ['blocked'],
+    aliases: ['blocked', 'bllist'],
     group: G,
     level: 'staff',
     usage: 'blocklist',
-    description: 'Lista los usuarios bloqueados.',
+    description: 'Muestra la blacklist.',
     run: async ({ message, guild }) => {
-      const blocks = await Block.find({ guildId: guild.id }).sort({ createdAt: -1 }).limit(50);
-      if (!blocks.length) return U.respond(message, 'info', 'No hay usuarios bloqueados.');
-      const lines = blocks.map((b) => `<@${b.userId}> (\`${b.userId}\`)${b.reason ? ` · ${b.reason}` : ''}`);
-      await U.respond(message, 'info', U.truncate(lines.join('\n'), 4096));
+      const blocks = await Block.find({
+        guildId: guild.id,
+        $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }],
+      }).sort({ createdAt: -1 }).limit(50);
+      if (!blocks.length) return U.respond(message, 'info', 'La blacklist está vacía.');
+      const lines = blocks.map((b) => `<@${b.userId}> (\`${b.userId}\`)`
+        + ` · ${b.expiresAt ? `hasta ${U.ts(b.expiresAt)}` : 'permanente'}`
+        + `${b.reason ? ` · ${U.truncate(b.reason, 80)}` : ''}`);
+      await message.reply({
+        embeds: [U.embed('info', U.truncate(lines.join('\n'), 4096)).setTitle(`⛔ Blacklist (${blocks.length})`)],
+        allowedMentions: { parse: [], repliedUser: false },
+      });
     },
   },
   {
@@ -214,8 +249,15 @@ const SLASH = {
   tickets: {},
   block: {
     build: (b) => userOption(b, false)
-      .addStringOption((o) => o.setName('motivo').setDescription('Motivo del bloqueo').setMaxLength(500)),
-    toArgs: (i) => [mention(i.options.getUser('usuario')), i.options.getString('motivo')].filter(Boolean).join(' '),
+      .addStringOption((o) => o.setName('motivo').setDescription('Motivo del bloqueo').setMaxLength(500))
+      .addStringOption((o) => o.setName('duracion').setDescription('Bloqueo temporal: 12h, 7d, 30d… (vacío = permanente)')),
+    toArgs: (i) => {
+      const time = i.options.getString('duracion')?.trim();
+      if (time && U.parseDuration(time) === null) {
+        throw new U.UserError('Duración no válida. Ejemplos: `12h`, `7d`, `30d`.');
+      }
+      return [mention(i.options.getUser('usuario')), time, i.options.getString('motivo')].filter(Boolean).join(' ');
+    },
   },
   unblock: {
     build: (b) => userOption(b, false),

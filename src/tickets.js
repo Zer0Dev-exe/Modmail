@@ -19,6 +19,18 @@ async function getGuild(client) {
   return client.guilds.cache.get(process.env.GUILD_ID) ?? client.guilds.fetch(process.env.GUILD_ID);
 }
 
+const BLOCK_NOTICE_COOLDOWN = 60 * 60 * 1000;
+const blockedNotices = new Map();
+
+/** Bloqueo vigente del usuario (el TTL de MongoDB tarda hasta un minuto en borrar los caducados). */
+function getActiveBlock(guildId, userId) {
+  return Block.findOne({
+    guildId,
+    userId,
+    $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }],
+  });
+}
+
 function addLog(ticket, entry) {
   return Ticket.updateOne({ _id: ticket._id }, { $push: { log: { ...entry, at: new Date() } } });
 }
@@ -121,9 +133,18 @@ async function handleDM(client, message) {
 async function processUserMessage(guild, cfg, message) {
   const { author } = message;
 
-  if (await Block.exists({ guildId: guild.id, userId: author.id })) {
-    await message.channel.send({ embeds: [U.embed('blocked', getMessage(cfg, 'blocked', U.vars({ guild, user: author })))] })
-      .catch(() => {});
+  const block = await getActiveBlock(guild.id, author.id);
+  if (block) {
+    // Se avisa como mucho una vez por hora para que no pueda usar al bot para hacer spam
+    const last = blockedNotices.get(author.id) ?? 0;
+    if (Date.now() - last > BLOCK_NOTICE_COOLDOWN) {
+      blockedNotices.set(author.id, Date.now());
+      const emb = U.embed('blocked', getMessage(cfg, 'blocked', U.vars({ guild, user: author })))
+        .setFooter({ text: guild.name, iconURL: guild.iconURL() ?? undefined });
+      if (block.reason) emb.addFields({ name: 'Motivo', value: U.truncate(block.reason, 1024), inline: true });
+      if (block.expiresAt) emb.addFields({ name: 'Hasta', value: `${U.ts(block.expiresAt, 'f')} (${U.ts(block.expiresAt)})`, inline: true });
+      await message.channel.send({ embeds: [emb] }).catch(() => {});
+    }
     return;
   }
 
@@ -479,6 +500,8 @@ async function sendTranscript(guild, cfg, ticket, closer) {
 
 module.exports = {
   getGuild,
+  getActiveBlock,
+  sendLog,
   addLog,
   handleDM,
   sendStaffReply,

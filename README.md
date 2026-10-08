@@ -77,22 +77,30 @@ Si escribe antes, se cancela solo. Sobrevive a reinicios.
 <tr>
 <td valign="top">
 
+### ⛔ Blacklist
+Impide que alguien abra tickets, de forma **permanente o temporal** (`block @user 7d`).
+Los bloqueos temporales caducan solos.
+
+</td>
+<td valign="top">
+
 ### ⚡ Slash y prefijo
 Usa `/reply` o `!r`, o activa solo uno de los dos desde el `.env`.
 Los slash autocompletan categorías y snippets.
 
 </td>
-<td valign="top">
+</tr>
+<tr>
+<td colspan="2" valign="top">
 
 ### 🎨 Todo personalizable
-Mensajes, colores de cada embed, nombre anónimo, prefijo, roles de staff y rol al que avisar.
-Todo desde comandos, sin tocar código.
+Mensajes, colores de cada embed, nombre anónimo, prefijo, roles de staff y rol al que avisar. Todo desde comandos, sin tocar código.
 
 </td>
 </tr>
 </table>
 
-Y además: **notas internas**, **snippets** (respuestas guardadas), **editar o borrar** tu última respuesta, **bloquear** usuarios, abrir tickets con `contact` y **transcripts** `.txt` de cada ticket en el canal de logs.
+Y además: **notas internas**, **snippets** (respuestas guardadas), **editar o borrar** tu última respuesta, abrir tickets con `contact` y **transcripts** `.txt` de cada ticket en el canal de logs.
 
 ---
 
@@ -182,13 +190,33 @@ npm start
 
 ### Staff
 
-| Comando | Qué hace |
-|---|---|
-| `help` | Lista de comandos |
-| `contact <@usuario>` | Abrir un ticket con alguien |
-| `tickets` | Ver los tickets abiertos |
-| `block [@usuario] [motivo]` · `unblock` · `blocklist` | Bloquear usuarios. Dentro de un ticket bloquea al usuario de ese ticket |
-| `snippet add\|edit\|remove\|list` | Gestionar respuestas guardadas |
+| Comando | Alias | Qué hace |
+|---|---|---|
+| `help` | | Lista de comandos |
+| `contact <@usuario>` | | Abrir un ticket con alguien |
+| `tickets` | | Ver los tickets abiertos |
+| `block [@usuario] [duración] [motivo]` | `blacklist` · `bl` | Añadir a la **blacklist**. Sin duración es permanente |
+| `unblock [@usuario]` | `unblacklist` · `unbl` | Quitar de la blacklist |
+| `blocklist` | `bllist` | Ver la blacklist con motivo y fecha de fin |
+| `snippet add\|edit\|remove\|list` | | Gestionar respuestas guardadas |
+
+<details>
+<summary><b>⛔ Cómo funciona la blacklist</b></summary>
+
+```
+!block @usuario spam                 ← permanente
+!block @usuario 7d insultos al staff ← temporal: se quita sola en 7 días
+!block 12h                           ← dentro de un ticket: bloquea a su usuario
+!unblock @usuario
+```
+
+- Un usuario en la blacklist **no puede abrir tickets**, y sus mensajes no llegan al staff aunque tenga uno abierto.
+- Recibe el mensaje `blocked` con el motivo y la fecha de fin, como mucho **una vez por hora**, para que no pueda usar al bot para hacer spam.
+- Los bloqueos temporales caducan solos. Los gestiona MongoDB, así que no se pierden aunque reinicies el bot.
+- No se puede bloquear a miembros del staff ni a bots.
+- Cada bloqueo y desbloqueo queda registrado en el canal de logs.
+
+</details>
 
 ### Administración · requiere *Gestionar servidor*
 
@@ -211,7 +239,7 @@ npm start
 - `/reply` y `/areply` tienen las opciones `archivo`, `archivo2` y `archivo3`.
 - `s` y `as` se llaman `/snip` y `/asnip`.
 - `/move`, `/snip`, `/asnip` y `/snippet` **autocompletan** los nombres.
-- `/close` tiene las opciones `motivo`, `tiempo`, `silencioso` y `cancelar`.
+- `/close` tiene las opciones `motivo`, `tiempo`, `silencioso` y `cancelar`. `/block` tiene `usuario`, `motivo` y `duracion`.
 
 </details>
 
@@ -233,7 +261,7 @@ npm start
 | `closingTitle` · `closing` | Al cerrarlo |
 | `autoClose` | Al programar un cierre automático (`{time}` = cuándo se cierra) |
 | `anonName` | Nombre que aparece en las respuestas anónimas |
-| `blocked` | Cuando escribe un usuario bloqueado |
+| `blocked` | Cuando escribe un usuario de la blacklist (se añaden el motivo y la fecha de fin) |
 
 Variables: `{user}` (mención), `{username}` y `{server}`. Los snippets también admiten `{staff}`.
 
@@ -291,9 +319,9 @@ El ticket se marca como cerrado y el transcript se envía al canal de logs igual
 </details>
 
 <details>
-<summary><b>¿Se pierden los cierres programados si reinicio el bot?</b></summary>
+<summary><b>¿Se pierden los cierres programados o los bloqueos temporales si reinicio el bot?</b></summary>
 
-No. Se guardan en MongoDB, y los que vencieron mientras el bot estaba apagado se ejecutan al arrancar.
+No. Los dos se guardan en MongoDB. Los cierres que vencieron mientras el bot estaba apagado se ejecutan al arrancar, y los bloqueos caducados se eliminan solos.
 
 </details>
 
@@ -308,13 +336,14 @@ src/
 ├── commands/
 │   ├── index.js      Despachador común para prefijo y slash
 │   ├── tickets.js    reply, areply, claim, move, close…
-│   ├── staff.js      help, contact, block, snippets…
+│   ├── staff.js      help, contact, blacklist, snippets…
 │   └── admin.js      setup, config, category
 ├── slash.js          Adaptador de interacciones y utilidades de slash
 ├── config.js         Configuración y mensajes por defecto
 ├── models.js         Esquemas de MongoDB
 ├── util.js           Embeds, colores, permisos y adjuntos
 └── env.js            Interruptores SLASH / PREFIX
+assets/               Logo, banner y capturas del README
 ```
 
 <div align="center">

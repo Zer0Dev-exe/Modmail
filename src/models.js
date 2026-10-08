@@ -72,8 +72,11 @@ const blockSchema = new Schema({
   userId: { type: String, required: true },
   reason: String,
   blockedBy: String,
+  // null = permanente. Con fecha, MongoDB borra el documento solo al llegar (índice TTL)
+  expiresAt: { type: Date, default: null },
 }, { timestamps: true });
 blockSchema.index({ guildId: 1, userId: 1 }, { unique: true });
+blockSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 const snippetSchema = new Schema({
   guildId: { type: String, required: true },
